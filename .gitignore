@@ -1,0 +1,8 @@
+.DS_Store
+.idea/
+node_modules/
+tmp/
+*.pdf
+*.zip
+.env*
+business-sandy-*.json
