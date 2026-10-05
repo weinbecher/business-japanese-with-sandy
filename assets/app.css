@@ -90,6 +90,14 @@ button.tag[aria-pressed="true"] { color:white; background:var(--sea-600); }
 .shadowing-intro p { margin:0 0 7px; }
 .shadowing-intro summary { cursor:pointer; color:var(--muted); font-size:.8rem; }
 .shadowing-intro details p { margin:10px 0 0; }
+.shadow-mode-controls { display:flex; align-items:end; flex-wrap:wrap; gap:12px; margin-bottom:12px; }
+.shadow-mode-controls label { display:grid; gap:5px; font-size:.8rem; font-weight:700; }
+.shadow-mode-controls select { max-width:100%; width:310px; font:inherit; padding:10px 12px; }
+.shadow-mode-controls .pill { font-size:.78rem; }
+.private-mac-form { display:grid; gap:8px; margin:12px 0; max-width:520px; }
+.private-mac-form input { width:100%; min-width:0; padding:11px; border:1px solid #bfe9f7; border-radius:10px; font:inherit; }
+.private-mac-form button { justify-self:start; }
+.manual-shadowing textarea:focus { outline:2px solid var(--sea-400); outline-offset:2px; }
 .shadowing-tools { display:flex; flex-wrap:wrap; align-items:start; gap:9px; margin-top:10px; }
 .mic-button { font-size:.78rem; padding:7px 10px; }
 .mic-button[aria-pressed="true"] { color:#795029; background:#fff7e9; border-color:#e8c694; }

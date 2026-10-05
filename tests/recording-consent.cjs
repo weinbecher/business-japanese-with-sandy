@@ -9,7 +9,7 @@ function load(localStorage=storage,options={}) {
   const starts=[],toast={classList:{toggle(){}},hidden:true};
   const context={
     window:{},document:{body:{dataset:{page:'textbook'}},getElementById(id){return id==='toast'?toast:null;},querySelector(){return null;},querySelectorAll(){return [];}},
-    localStorage,location:{search:'',hash:''},URLSearchParams,setTimeout,clearTimeout,console,Intl
+    localStorage,location:{search:'',hash:'',protocol:'http:',hostname:'127.0.0.1'},URLSearchParams,setTimeout,clearTimeout,console,Intl
   };
   vm.createContext(context);
   for(const name of ['data','vocab','dialogues','traps']) vm.runInContext(fs.readFileSync(path.join(root,`assets/${name}.js`),'utf8'),context);

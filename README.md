@@ -1,6 +1,6 @@
 # Business Japanese with Sandy
 
-Source repository: [weinbecher/business-japanese-with-sandy](https://github.com/weinbecher/business-japanese-with-sandy) (private).
+Source repository: [weinbecher/business-japanese-with-sandy](https://github.com/weinbecher/business-japanese-with-sandy).
 
 An independent static website based on the chapter and expression scope of
 『人を動かす 実戦ビジネス日本語会話 中級1』
@@ -42,10 +42,37 @@ Open `home.html` directly, or run `python3 preview.py` for the local preview at
 allowlist of site pages and assets, and does not expose the PDF, backups or Git files.
 
 All study content uses regular local scripts, so there is no build step and no npm
-installation. The app code is backed up in its separate private GitHub repository;
+installation. The app code is backed up in its separate GitHub repository;
 the textbook PDF, downloaded model, recordings and local learning backups are excluded.
-Pushing code does not publish the website. Hosting can be configured separately;
-local Whisper recognition still requires the loopback server on this Mac.
+GitHub Pages publishes the static study website independently of this Mac.
+Local Whisper recognition still requires the loopback server on this Mac.
+
+### Online hosting: GitHub Pages
+
+On 2026-10-06 the owner requested switching to a public repository and GitHub
+Pages after a private Sites publishing attempt was blocked. The source code and
+static study pages are public; personal learning records are not repository files.
+The textbook PDF and publisher audio are not distributed.
+
+The learning homepage is
+[Business Japanese with Sandy](https://weinbecher.github.io/business-japanese-with-sandy/home.html).
+Configure GitHub Pages to **Deploy from a branch → main → / (root)**. The
+tracked `.nojekyll` file publishes these plain HTML/JS assets without Jekyll.
+After Pages is enabled, pushing a new commit to `main` updates the website;
+verify that its Pages build succeeds before reporting an update as live.
+
+The static online conversation page defaults to iPad/system dictation. Whisper
+still runs only on your Mac's local or configured private Tailscale page; the
+online edition does not send microphone audio to a public recognition service.
+The public study website needs no ChatGPT sign-in. The optional Sandy learning
+account is for progress and review sync. Sign in to the same account or import a backup to transfer
+progress from localhost; guest records are browser/origin-local.
+
+The earlier Sites registration remains unpublished and is not the active host.
+Its separate `online-site/` checkout and manifest are deliberately git-ignored;
+do not upload them or their Git metadata. The optional `prepare-online-site.mjs`
+script copies only eleven pages and ten public assets there for local checks;
+GitHub Pages does not depend on that ignored checkout or the Sites publisher.
 
 ## Navigation
 
@@ -105,12 +132,21 @@ for an answer before reading the complete sentence, then scrolls forward. On the
 dialogue page, choose your role: Sandy reads the other turns and waits for you to
 click “我说完了” on your turn.
 
-Each dialogue line has a **跟读检查** microphone button. Recognition now uses
+The **跟读方式** selector offers both **Mac Whisper** and **iPad / 系统听写**.
+The choice is remembered only on this browser/site, separately from learning
+accounts and backups. Changing modes stops any current recording and never starts
+another one automatically. A local/private Mac page defaults to Whisper; a static
+hosted page defaults to system dictation. `?speech=whisper` or `?speech=dictation`
+can explicitly choose the initial mode without changing the stored preference.
+
+In Whisper mode each dialogue line has a **跟读检查** microphone button. It uses
 **local Whisper.cpp v1.9.4 with the multilingual small-q5_1 model**, not the browser's
 `SpeechRecognition` service. It runs on this Mac's CPU, has no API fee or key,
 and makes no network requests during transcription. The browser only captures
 microphone PCM with AudioWorklet, converts it to mono 16 kHz WAV, and sends it to
-the same-origin loopback server after explicit consent and microphone permission.
+the same-origin Mac server after explicit consent and microphone permission,
+either directly on localhost or through an explicitly configured private HTTPS
+Tailscale Serve proxy. The remote disclosure names the receiving Mac hostname.
 The app's recording disclosure is acknowledged once and remembered for this
 browser/site, including page reloads and account changes. It is stored separately
 from learning records and never synced or exported. Clearing site data or using
@@ -158,7 +194,7 @@ Older backups without this section still import; timestamped removal tombstones
 prevent another device from restoring removed words. An original-sentence link
 returns to its dialogue turn without needing microphone permission.
 
-The server binds only to `127.0.0.1`, checks exact Host and same-origin POST requests,
+The server still binds only to `127.0.0.1`, checks exact Host and POST Origin,
 has bounded audio sizes, and never serves model files, source, temporary recordings,
 or private files. Audio exists in browser memory and a temporary local directory
 which is deleted after success, cancellation or failure. Transcripts remain in page
@@ -166,6 +202,10 @@ memory, are not logged or synced to the learning account, and clear on reload or
 account change. Starting playback, switching lines or leaving the page cancels
 recognition. A permission prompt that resolves after cancellation immediately stops
 its late microphone stream. Checking your turn preserves “我说完了”.
+Optional iPad access adds only one validated, configured `.ts.net` HTTPS origin,
+keeps CORS disabled, rejects cross-site requests and Tailscale Funnel headers,
+and never exposes a directory, model, textbook, Git files or app source. No public
+site posts audio across origins to the Mac. Open the private Mac page instead.
 
 ### Local installation and startup
 
@@ -180,21 +220,57 @@ directory. The supplied textbook PDF remains private too.
 After installation, double-click **Start Sandy.command** or run
 `.local-speech/venv/bin/python preview.py`. Keep that local server running while
 practising; reopening the HTML directly does not start Whisper. Restarting the
-server does not repeat the model download. Recognition is available only on
-`http://127.0.0.1:8765` (or localhost), not GitHub Pages, a phone or an iPad.
-The rest of the static website can still be deployed without the local engine.
+server does not repeat the model download. Whisper recognition is available on
+`http://127.0.0.1:8765` (or localhost), and optionally on the Mac's private HTTPS
+page from an iPad through Tailscale. GitHub Pages cannot run the Whisper server.
+The static website can be hosted independently and use iPad keyboard dictation.
 
-If recognition is unavailable, use **系统听写／文字比对**: enter or paste Japanese,
-or use the device keyboard's Japanese dictation. Input updates the same karaoke view
-without claiming microphone recognition; click **比对文字** to finish. This is also
-useful for correcting a transcription before comparing it. Embedded browsers must
-still expose microphone capture and allow access; use standalone Safari/Chrome if
-not. Localhost is a secure context for microphone capture.
+### Use either mode on iPad
 
-Checks: `node tests/content-and-state.cjs`, `node tests/navigation.cjs`, `node tests/shadowing.cjs`, `node tests/shadow-words.cjs` and
+**iPad-only dictation:** open the hosted study page in Safari and select
+**iPad / 系统听写**. Enable Dictation in Settings → General → Keyboard and add
+a Japanese keyboard. Tap a line's **日语听写** button to open/focus its text box,
+switch to Japanese, then tap the **keyboard's** microphone. The website cannot
+start or stop Apple's system dictation for you and does not claim to do so.
+Text input updates the same highlights; tap **比对文字** to finish, listen to
+highlighted source words and star them as usual. Apple decides whether dictation
+is processed on-device or by its services depending on your device/language/settings;
+check Dictation & Privacy. The app makes no Whisper request in this mode.
+[Apple's iPad dictation guide](https://support.apple.com/guide/ipad/dictate-text-ipad997d9642/ipados).
+
+**iPad microphone + Mac Whisper:** install Tailscale on both devices and sign
+in to the same private network. Use standalone Safari on iPad. On this Mac,
+double-click **Start Sandy for iPad.command**. It checks the Mac's private
+device name and existing Serve settings, then creates a private HTTPS proxy to
+the loopback server. It never enables public Funnel or resets/overwrites another
+app's port-443 routes. Allow Tailscale's HTTPS/Serve setup if asked.
+It shows your private iPad URL and writes only that origin to the git-ignored
+`.local-speech/ipad-access.json`; the updated server picks up this configuration
+without a restart. If an older server occupies port 8765, the launcher asks you
+to close its window first rather than killing it. Keep the Mac awake and Sandy
+running. The iPad captures audio; the Mac performs Whisper inference.
+[Tailscale Serve](https://tailscale.com/docs/features/tailscale-serve).
+
+On a hosted page, **连接我的 Mac（可选）** can remember this validated private
+root URL in the current browser. Its link opens the Mac's private conversation
+page; saving an address never starts recording or sends an audio request. This
+address and mode setting are not uploaded with learning data. Use the same Sandy
+learning account on both origins to sync progress and saved words, or export/import
+a backup; browser-local records are otherwise separate.
+
+Both modes also allow pasted/typed Japanese and compare recognized text rather
+than grading pronunciation. Embedded browsers must expose microphone capture
+for Whisper; use Safari/Chrome if not. HTTPS/private certificates are required
+on iPad; a plain `http://192.168…` address is not a secure microphone page.
+
+Checks: `node tests/content-and-state.cjs`, `node tests/navigation.cjs`,
+`node tests/shadowing.cjs`, `node tests/shadow-words.cjs`,
+`node tests/recording-consent.cjs`, `node tests/dual-speech-mode.cjs` and
 `python tests/local_speech_test.py` cover content, state, Japanese-only audio,
 navigation destinations, resume selection, menu dismissal, prefix karaoke, PCM encoding, lifecycle, permission/error handling, silence,
-cancellation, cleanup and same-origin security. Actual Japanese WAV inference can
+cancellation, cleanup, dual-mode device preferences, no-recording dictation,
+exact private origin checks, conflict/Funnel refusal and same-origin security.
+Actual Japanese WAV inference can
 also be tested through the local endpoint; human microphone capture/accuracy still
 requires the user's permission and real reading.
 

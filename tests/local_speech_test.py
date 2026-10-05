@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from local_speech import LocalSpeechEngine, SpeechError, inspect_wav
 from preview import PreviewHandler
 from http.server import ThreadingHTTPServer
+from ipad_access import private_origin, check_serve_config
 
 
 def wav_bytes(seconds=1, rate=16000, channels=1, sample=0):
@@ -148,6 +149,7 @@ class EndpointTests(unittest.TestCase):
         for path in ["/.git/config", "/local_speech.py", "/.local-speech/ggml-base.bin", "/assets/../preview.py", "/assets/"]:
             self.assertEqual(self.request("GET", path)[0], 404)
         self.assertEqual(self.request("GET", "/assets/mic-worklet.js")[0], 200)
+        self.assertEqual(self.request("GET", "/ipad_access.py")[0], 404)
 
     def test_learning_home_and_original_routes(self):
         status, home = self.request("GET", "/home.html")
@@ -171,6 +173,39 @@ class EndpointTests(unittest.TestCase):
         self.assertEqual(self.request("POST", path, "x" * 300, headers)[0], 413)
         self.assertEqual(self.request("POST", path, "{}", {**headers, "Content-Type": "text/plain"})[0], 415)
         self.assertEqual(self.request("POST", path, "{}", {**headers, "Sec-Fetch-Site": "cross-site"})[0], 403)
+
+    def test_private_origin_exact_allowlist_no_cors_or_funnel(self):
+        origin = "https://my-mac.tail123.ts.net"
+        body = json.dumps({"session": str(uuid.uuid4())})
+        headers = {"Content-Type": "application/json", "Origin": origin, "Host": "my-mac.tail123.ts.net"}
+        self.assertEqual(self.request("GET", "/api/speech/status", headers={"Host": "my-mac.tail123.ts.net"})[0], 403)
+        self.server.private_origin = origin
+        try:
+            status, data = self.request("GET", "/api/speech/status", headers={"Host": "my-mac.tail123.ts.net"})
+            self.assertEqual(status, 200)
+            self.assertEqual(json.loads(data)["private_origin"], origin)
+            self.assertEqual(self.request("POST", "/api/speech/cancel", body, headers)[0], 200)
+            # Tailscale may retain the external Host or rewrite it to its backend.
+            self.assertEqual(self.request("POST", "/api/speech/cancel", body, {**headers, "Host": f"127.0.0.1:{self.port}"})[0], 200)
+            for invalid in ["https://other-mac.tail123.ts.net", origin + ".evil.example", "https://evil.example", "http://my-mac.tail123.ts.net"]:
+                self.assertEqual(self.request("POST", "/api/speech/cancel", body, {**headers, "Origin": invalid})[0], 403)
+            self.assertEqual(self.request("GET", "/api/speech/status", headers={"Host": "other-mac.tail123.ts.net"})[0], 403)
+            self.assertEqual(self.request("POST", "/api/speech/cancel", body, {**headers, "Sec-Fetch-Site": "cross-site"})[0], 403)
+            self.assertEqual(self.request("POST", "/api/speech/cancel", body, {**headers, "Tailscale-Funnel-Request": "true"})[0], 403)
+        finally:
+            del self.server.private_origin
+
+    def test_private_setup_rejects_unsafe_urls_and_conflicting_routes(self):
+        origin = "https://my-mac.tail123.ts.net"
+        self.assertEqual(private_origin(origin + "/"), origin)
+        for invalid in ["https://evil.example", origin + ".evil.example", origin + "/api", origin + "?key=x", "http://my-mac.tail123.ts.net", "https://a:b@my-mac.tail123.ts.net", "https://my-mac.tail123.ts.net:8765", None]:
+            self.assertIsNone(private_origin(invalid))
+        self.assertFalse(check_serve_config({}, origin))
+        valid = {"TCP": {"443": {"HTTPS": True}}, "Web": {"my-mac.tail123.ts.net:443": {"Handlers": {"/": {"Proxy": "http://127.0.0.1:8765"}}}}}
+        self.assertTrue(check_serve_config(valid, origin))
+        for unsafe in [{**valid, "AllowFunnel": {"my-mac.tail123.ts.net:443": True}}, {"TCP": {"443": {"TCPForward": "localhost:22"}}}, {"Foreground": {"other": valid}}, {**valid, "Web": {"my-mac.tail123.ts.net:443": {"Handlers": {"/": {"Proxy": "http://127.0.0.1:3000"}}}}}]:
+            with self.assertRaises(ValueError):
+                check_serve_config(unsafe, origin)
 
 
 if __name__ == "__main__":

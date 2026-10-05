@@ -4,6 +4,7 @@ from pathlib import Path
 from urllib.parse import urlsplit, unquote
 import json
 from local_speech import LocalSpeechEngine, SpeechError, MAX_AUDIO_BYTES
+from ipad_access import private_origin as validate_private_origin, read_private_origin
 
 ROOT = Path(__file__).resolve().parent
 PAGES = {"home.html", "index.html", "grammar-quiz.html", "vocab.html", "grammar.html", "conversations.html", "mistakes.html", "shadow-words.html", "tag.html", "textbook.html", "login.html"}
@@ -24,9 +25,20 @@ class PreviewHandler(SimpleHTTPRequestHandler):
         # endpoint through CORS, simple form posts, or DNS rebinding.
         host = self.headers.get("Host", "")
         hosts = {f"127.0.0.1:{self.server.server_port}", f"localhost:{self.server.server_port}"}
+        origins = {"http://" + allowed for allowed in hosts}  # No wildcard origins or CORS.
+        private = self.private_origin()
+        if private:
+            hostname = urlsplit(private).hostname
+            hosts.update({hostname, hostname + ":443"})
+            origins.add(private)
+        if self.headers.get("Tailscale-Funnel-Request"):
+            return False
         return host in hosts and (not write or (
-            self.headers.get("Origin") == f"http://{host}" and
+            self.headers.get("Origin") in origins and
             self.headers.get("Sec-Fetch-Site", "same-origin") in {"same-origin", "none"}))
+
+    def private_origin(self):
+        return validate_private_origin(getattr(self.server, "private_origin", None)) or read_private_origin()
 
     def respond(self, data, status=200):
         body = json.dumps(data, ensure_ascii=False).encode()
@@ -44,7 +56,7 @@ class PreviewHandler(SimpleHTTPRequestHandler):
             self.send_error(403)
             return
         if urlsplit(self.path).path == "/api/speech/status":
-            self.respond(ENGINE.status())
+            self.respond({**ENGINE.status(), "private_origin": self.private_origin(), "access_version": 1})
             return
         if urlsplit(self.path).path == "/":
             self.path = "/home.html"
@@ -61,7 +73,7 @@ class PreviewHandler(SimpleHTTPRequestHandler):
 
     def do_POST(self):
         if not self.local_request(write=True):
-            self.respond({"code": "origin", "message": "只接受本机页面的请求。"}, 403)
+            self.respond({"code": "origin", "message": "只接受本机页面或已配置的私人 HTTPS 页面请求。"}, 403)
             return
         path = urlsplit(self.path).path
         try:

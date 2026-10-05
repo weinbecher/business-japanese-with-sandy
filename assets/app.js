@@ -22,6 +22,9 @@
   // Device/site acknowledgement only: never include it in account sync or backups.
   const SHADOW_CONSENT_KEY="business-sandy:local-recording-consent";
   const SHADOW_CONSENT_VERSION="local-whisper-v1";
+  const SHADOW_MODE_KEY="business-sandy:speech-mode:v1";
+  const PRIVATE_MAC_KEY="business-sandy:private-mac:v1";
+  const PRIVATE_MAC_HOST=/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.ts\.net$/i;
   let account=null, client=null, scope="guest", state=readState(scope), accountEpoch=0, syncTimer, syncing=false, resync=false, syncCompletion=Promise.resolve();
   let filters=new Set(), favoriteOnly=false, includeMastered=false, query="", currentId=null, restored=false, userInteracted=false, progressSuspended=false;
   let auto=false, autoGeneration=0, speechGeneration=0, speechResolve=null, voices=[], observer=null, listItems=[];
@@ -29,9 +32,27 @@
   let shadowing=null, shadowConsent=readShadowConsent(), pendingShadowKey=null;
   const shadowStates=new Map();
   const params=new URLSearchParams(location.search);
+  let shadowMode=readShadowMode(), shadowStatusGeneration=0;
   let shadowWordItems=[];
   refreshShadowWordItems();
 
+  function isPrivateWhisperPage() { return location.protocol==="https:"&&PRIVATE_MAC_HOST.test(location.hostname); }
+  function isWhisperPage() { return location.protocol==="http:"&&["127.0.0.1","localhost"].includes(location.hostname)||isPrivateWhisperPage(); }
+  function readShadowMode() {
+    const requested=params.get("speech"); if(["whisper","dictation"].includes(requested)) return requested;
+    try { const saved=localStorage.getItem(SHADOW_MODE_KEY); if(["whisper","dictation"].includes(saved)) return saved; } catch {}
+    return isWhisperPage()?"whisper":"dictation";
+  }
+  function privateMacOrigin(value) {
+    if(!value) return null;
+    try { const url=new URL(value); return url.protocol==="https:"&&PRIVATE_MAC_HOST.test(url.hostname)&&!url.port&&!url.username&&!url.password&&["","/"].includes(url.pathname)&&!url.search&&!url.hash?url.origin:null; } catch { return null; }
+  }
+  function readPrivateMac() { try { return privateMacOrigin(localStorage.getItem(PRIVATE_MAC_KEY)); } catch { return null; } }
+  function privateMacLink(origin) {
+    const url=privateMacOrigin(origin); if(!url) return null;
+    const item=byId.get(currentId),hash=item?.kind==="dialogue"?`#${encodeURIComponent(item.id)}`:"";
+    return `${url}/conversations.html?speech=whisper${hash}`;
+  }
   function readShadowConsent() {
     try { return localStorage.getItem(SHADOW_CONSENT_KEY)===SHADOW_CONSENT_VERSION; } catch { return false; }
   }
@@ -434,7 +455,7 @@
     return `<section class="shadow-word-actions" aria-label="本句待核对的词"><div class="shadow-word-heading"><span>点击词听原读音 · ☆ 留到错词本</span><a href="shadow-words.html">错词本 ↗</a></div>${words.map(word=>`<div class="shadow-word-row">${shadowWordButton(s,word.term,word.start,word.end,`spoken-${word.difference}`)}<button type="button" class="icon-button" data-shadow-save="${esc(word.key)}" data-word-start="${word.start}" data-word-end="${word.end}" aria-label="${favorite(word)?"取消收藏词":"收藏词"}：${esc(word.term)}" aria-pressed="${favorite(word)}">${favorite(word)?"★":"☆"}</button><span>${word.difference==="missing"?"可能漏读":"文字不同，待核对"}</span></div>`).join("")}</section>`;
   }
   function recognitionError(code) {
-    return {"NotAllowedError":"麦克风未允许。请在浏览器及 macOS 的麦克风设置中允许后重试。","NotFoundError":"找不到麦克风，请检查输入设备。","NotReadableError":"麦克风被占用或无法打开，请检查系统输入设备。","no-speech":"没有识别到日语声音，不作判定。请检查麦克风电平后重新读。","timeout":"等待超时，麦克风已停止。未获得权限时请允许麦克风后重试。","unsupported":"此浏览器未开放录音接口；本机 Whisper 不依赖浏览器的语音服务，但仍需要麦克风权限。请在独立 Safari／Chrome 打开这个本机地址。","local-only":"本地识别只在这台 Mac 的 http://127.0.0.1:8765 页面可用，不会向在线网站发送录音。","connection":"连接不到本机 Whisper。请保持本机预览服务运行，再刷新重试。","capture":"录音启动失败，麦克风已停止。请检查设备及权限后重试。"}[code]||"本机识别失败，不作判定。请重试。";
+    return {"NotAllowedError":"麦克风未允许。请在 Safari／Chrome 及设备的麦克风设置中允许后重试；也可以切换到 iPad 听写。","NotFoundError":"找不到麦克风，请检查输入设备。","NotReadableError":"麦克风被占用或无法打开，请检查系统输入设备。","no-speech":"没有识别到日语声音，不作判定。请检查麦克风电平后重新读。","timeout":"等待超时，麦克风已停止。未获得权限时请允许麦克风后重试。","unsupported":"此浏览器未开放录音接口。请在 Safari／Chrome 打开，或切换到 iPad 听写。","local-only":"Mac Whisper 需要本机页面或你配置的 Tailscale 私人 HTTPS 页面。在线学习页可以使用 iPad 听写，不会在后台把录音发到 Mac。","private-origin":"Mac 尚未允许这个私人 HTTPS 地址，请完成 iPad 连接设置后重试。","connection":"连接不到 Mac 的 Whisper。请保持 Mac 唤醒并运行 Sandy，检查 Tailscale 连接；仍可切换到 iPad 听写。","capture":"录音启动失败，麦克风已停止。请检查设备及权限后重试。"}[code]||"本机识别失败，不作判定。请重试。";
   }
   function pcmWav(chunks,rate) {
     // Average source intervals when downsampling, then encode mono 16 kHz PCM16.
@@ -489,7 +510,7 @@
     }
   }
   class ShadowRecognizer {
-    constructor({local=["127.0.0.1","localhost"].includes(location.hostname)&&location.protocol==="http:",supported=!!(window.isSecureContext&&navigator.mediaDevices?.getUserMedia&&(window.AudioContext||window.webkitAudioContext)&&window.AudioWorkletNode),onChange=()=>{},captureFactory=onSamples=>new PcmRecorder(onSamples),fetcher=(...args)=>window.fetch(...args),setTimer=(fn,ms)=>setTimeout(fn,ms),clearTimer=id=>clearTimeout(id)}={}) {
+    constructor({local=isWhisperPage(),supported=!!(window.isSecureContext&&navigator.mediaDevices?.getUserMedia&&(window.AudioContext||window.webkitAudioContext)&&window.AudioWorkletNode),onChange=()=>{},captureFactory=onSamples=>new PcmRecorder(onSamples),fetcher=(...args)=>window.fetch(...args),setTimer=(fn,ms)=>setTimeout(fn,ms),clearTimer=id=>clearTimeout(id)}={}) {
       Object.assign(this,{local,supported,onChange,captureFactory,fetcher,setTimer,clearTimer}); this.active=null;
     }
     async request(path,options={},timeout=6000) {
@@ -543,6 +564,7 @@
         run.capture.onError=error=>this.fail(run,error);
         const status=await this.request("/api/speech/status");
         if(this.active!==run) return;
+        if(isPrivateWhisperPage()&&status.private_origin!==location.origin) throw Object.assign(new Error(recognitionError("private-origin")),{code:"private-origin"});
         if(!status.ready) throw Object.assign(new Error(status.message),{code:"not-ready"});
         run.stage="permission"; this.emit(run,"starting");
         run.timer=this.setTimer(()=>this.fail(run,"timeout"),20000);
@@ -593,10 +615,11 @@
   }
   function shadowingMarkup(s) {
     if(!s) return "";
-    if(s.phase==="consent") return `<div class="mic-consent"><p>录音只交给这台 Mac 的 Whisper 处理，不上传互联网或学习账户，处理完自动删除。确认后浏览器会请求麦克风权限。</p><p class="comparison-note">此说明只需确认一次，同一浏览器和网站会记住；之后点击「跟读检查」即可开始。</p><div class="tags"><button type="button" class="pill" data-shadow-start="${esc(s.key)}">允许本机录音并开始</button><button type="button" class="link-button" data-shadow-cancel="${esc(s.key)}">取消</button></div></div>`;
+    if(s.phase==="consent") return `<div class="mic-consent"><p>${isPrivateWhisperPage()?`录音通过私人 HTTPS 连接发送到你连接的 Mac（${esc(location.hostname)}），由 Mac 的 Whisper 处理后删除，不交给付费语音服务或学习账户。`:"录音只交给这台 Mac 的 Whisper 处理，不上传互联网或学习账户，处理完自动删除。"}确认后浏览器会请求麦克风权限。</p><p class="comparison-note">此说明只需确认一次，同一浏览器和网站会记住；之后点击「跟读检查」即可开始。</p><div class="tags"><button type="button" class="pill" data-shadow-start="${esc(s.key)}">${isPrivateWhisperPage()?"允许录音交给我的 Mac 并开始":"允许本机录音并开始"}</button><button type="button" class="link-button" data-shadow-cancel="${esc(s.key)}">取消</button></div></div>`;
+    if(s.phase==="dictation") return '<p class="mic-status">已打开输入框：切换到日语键盘，点击键盘上的 🎙，读完点「比对文字」。网页不能代替你启动系统听写。</p>';
     if(["starting","listening","processing","typing"].includes(s.phase)) {
       const live=s.live||compareLiveSpoken(s.expected,s.transcript);
-      const status=s.phase==="starting"?(s.stage==="permission"?"请允许浏览器使用麦克风（最多等待 20 秒）":"正在检查本机 Whisper…"):s.phase==="listening"?`本机录音 · ${Math.floor(s.seconds||0)} 秒 · ${s.stage==="decoding"?"Whisper 正在识别，仍可继续读":"读完点「停止并比对」"}`:s.phase==="typing"?"系统听写／输入预览 · 非麦克风识别":"麦克风已停止 · 本机 Whisper 正在比对…";
+      const status=s.phase==="starting"?(s.stage==="permission"?"请允许浏览器使用麦克风（最多等待 20 秒）":"正在检查 Mac Whisper…"):s.phase==="listening"?`录音交给 Mac · ${Math.floor(s.seconds||0)} 秒 · ${s.stage==="decoding"?"Whisper 正在识别，仍可继续读":"读完点「停止并比对」"}`:s.phase==="typing"?"系统听写／输入预览 · 非 Whisper 识别":"麦克风已停止 · Mac Whisper 正在比对…";
       return `<p class="mic-status">${status}</p>${s.phase==="listening"?`<div class="mic-level"><span>麦克风电平</span><meter min="0" max="100" value="${s.level||0}">${s.level||0}</meter><span>${s.level?"收到声音":"请读一句，检查电平是否变化"}</span></div>`:""}<div class="karaoke-position">${live.located?`暂定读到 <strong lang="ja">${esc(live.currentText)}</strong>${live.hasUncertain?" · 有片段待核对":""}`:s.transcript?"暂时无法定位，请从句首读或等待文字更新。":"请从句首读，文字会跟着识别结果亮起。"}</div><div class="karaoke-legend"><span class="karaoke-same">文字相符</span><span class="karaoke-uncertain">待核对</span><span class="karaoke-pending">还未读到</span></div>${s.transcript?`<div class="heard-live"><span class="comparison-label">${s.source==="manual"?"输入文字":"暂定识别文字"}</span><span lang="ja">${esc(s.transcript)}</span></div>`:""}<p class="comparison-note">本机识别分段更新，可能延迟数秒；黄色不是发音错误。读完后再判断可能漏读的部分。</p>`;
     }
     if(s.phase!=="result") return `<p class="mic-status ${s.phase==="error"?"error":""}">${esc(s.message)}</p>`;
@@ -608,8 +631,9 @@
   }
   function shadowingTools(item,index) {
     const key=`${item.id}:${index}`,s=shadowStates.get(key); const active=["starting","listening","processing"].includes(s?.phase);
-    return `<div class="shadowing-tools"><button type="button" class="pill mic-button" data-shadow-listen="${item.id}" data-turn-index="${index}" aria-pressed="${active}">${active?(s.phase==="processing"?"× 取消识别":"■ 停止并比对"):"🎙 跟读检查"}</button><details class="manual-shadowing"><summary>⌨ 系统听写／文字比对</summary><form data-shadow-form="${key}"><label for="heard-${key}">粘贴日语，或用键盘的日语听写；输入时也会高亮</label><textarea id="heard-${key}" data-shadow-text="${key}" rows="2" maxlength="1000" lang="ja" placeholder="在这里输入识别出的日语…">${esc(s?.transcript||"")}</textarea><button class="pill" type="submit">比对文字</button></form></details></div><div class="shadowing-result" data-shadow-key="${key}" aria-live="${active||s?.phase==="typing"?"off":"polite"}" aria-atomic="true" ${s?"":"hidden"}>${shadowingMarkup(s)}</div>`;
+    return `<div class="shadowing-tools"><button type="button" class="pill mic-button" data-shadow-listen="${item.id}" data-turn-index="${index}" aria-pressed="${active}">${shadowButtonLabel(s)}</button><details class="manual-shadowing"><summary>⌨ 日语听写／文字比对</summary><form data-shadow-form="${key}"><label for="heard-${key}">切换日语键盘，点键盘 🎙 听写；也可以输入或粘贴日语</label><textarea id="heard-${key}" data-shadow-text="${key}" rows="2" maxlength="1000" lang="ja" placeholder="在这里听写或输入日语…">${esc(s?.transcript||"")}</textarea><button class="pill" type="submit">比对文字</button></form></details></div><div class="shadowing-result" data-shadow-key="${key}" aria-live="${active||s?.phase==="typing"?"off":"polite"}" aria-atomic="true" ${s?"":"hidden"}>${shadowingMarkup(s)}</div>`;
   }
+  function shadowButtonLabel(s) { return ["starting","listening","processing"].includes(s?.phase)?s.phase==="processing"?"× 取消识别":"■ 停止并比对":shadowMode==="dictation"?"⌨ 日语听写":"🎙 跟读检查"; }
   function updateShadowing(s) {
     shadowStates.set(s.key,s);
     const result=document.querySelector(`[data-shadow-key="${s.key}"]`);
@@ -623,7 +647,7 @@
     const [id,rawIndex]=s.key.split(":"),turn=byId.get(id)?.turns[Number(rawIndex)];
     if(japanese&&turn) japanese.innerHTML=karaokeSentence(turn.jp,s);
     if(live||s.phase==="consent") { const prompt=line.querySelector(".role-prompt"); if(prompt) prompt.parentElement.open=true; }
-    button.setAttribute("aria-pressed",String(active)); button.textContent=active?(s.phase==="processing"?"× 取消识别":"■ 停止并比对"):"🎙 跟读检查";
+    button.setAttribute("aria-pressed",String(active)); button.textContent=shadowButtonLabel(s);
     line.classList.toggle("mic-active",active);
     const input=line.querySelector("[data-shadow-text]");
     if(s.transcript&&input!==document.activeElement) input.value=s.transcript;
@@ -644,6 +668,11 @@
     const key=`${item.id}:${index}`;
     if(shadowing.active?.key===key) { shadowing.stop(); return; }
     cancelShadowConsent(); pauseForShadowing(key); shadowing.cancel(); save("progress",PAGE,{id:item.id,turn:index});
+    if(shadowMode==="dictation") {
+      updateShadowing({key,expected:turn.jp,transcript:shadowStates.get(key)?.transcript||"",phase:"dictation",source:"manual"});
+      const input=document.querySelector(`[data-shadow-text="${key}"]`); if(input) { input.closest("details").open=true; input.focus(); }
+      return;
+    }
     shadowConsent=shadowConsent||readShadowConsent();
     if(shadowing.local&&shadowing.supported&&!shadowConsent&&!confirmed) { pendingShadowKey=key; updateShadowing({key,expected:turn.jp,transcript:"",phase:"consent"}); return; }
     if(confirmed&&shadowing.local&&shadowing.supported) rememberShadowConsent();
@@ -652,10 +681,18 @@
   function setupShadowing() {
     if(PAGE!=="dialogues") return;
     shadowing=new ShadowRecognizer({onChange:updateShadowing});
-    $("pageContent").insertAdjacentHTML("afterbegin",`<section class="shadowing-intro"><p>🎙 本机 Whisper · 免费 · 录音不上传</p><p id="localSpeechStatus" role="status">正在检查本机识别…</p><p class="comparison-note">黄色原词可以点听；比对后点 ☆，留到 <a href="shadow-words.html">跟读错词本</a>。</p><details><summary>麦克风与识别说明</summary><p>蓝色对应识别文字，黄色待核对，淡色还未读到。Whisper 每隔几秒处理一次，电脑速度影响延迟。尚未读到的句尾不算漏读；读完点「停止并比对」，再检查可能漏读、不同和多出。这里不判断发音、重音或语调。录音过程中点词听读，会停止麦克风，避免把播放声音识别进去。</p><p>识别在这台 Mac 上运行，不调用浏览器的语音服务，不需要 API 账号。录音临时处理后自动删除，识别文字仅留在页面内存，不上传学习账户。只有你点 ☆ 的正确原词位置和复习标记会保存、备份并随账户同步；不会保存录音或完整识别文字。每句最多 60 秒。只在本机地址可用；GitHub Pages 和其他设备不能运行这个本地模型。</p><p>若浏览器未开放麦克风或未允许权限，请在独立 Safari／Chrome 打开本机地址。仍可使用下方文字比对。</p></details></section>`);
-    if(!shadowing.local) $("localSpeechStatus").textContent=recognitionError("local-only");
-    else if(!shadowing.supported) $("localSpeechStatus").textContent=recognitionError("unsupported");
-    else shadowing.request("/api/speech/status").then(status=>{ $("localSpeechStatus").textContent=`${status.ready?"✓ ":""}${status.message} · ${status.model}`; }).catch(error=>{ $("localSpeechStatus").textContent=`${recognitionError("connection")}（${error.message}）`; });
+    $("pageContent").insertAdjacentHTML("afterbegin",shadowModeMarkup());
+    $("shadowMode").onchange=()=>setShadowMode($("shadowMode").value);
+    $("checkMacConnection").onclick=()=>refreshShadowModeStatus();
+    $("privateMacForm").onsubmit=event=>{
+      event.preventDefault(); const origin=privateMacOrigin($("privateMacAddress").value.trim());
+      if(!origin) { $("privateMacMessage").textContent="请输入你自己的 Tailscale HTTPS 根地址，例如 https://你的Mac.你的网络.ts.net（不要附加页面路径）。"; return; }
+      try { localStorage.setItem(PRIVATE_MAC_KEY,origin); $("privateMacMessage").textContent="地址只记在此浏览器。点下方链接打开 Mac 私人页面；不会自动开启麦克风。"; }
+      catch { $("privateMacMessage").textContent="地址本次可用，但浏览器无法保存；下次可能需要重新输入。"; }
+      updatePrivateMacLink(origin);
+    };
+    updatePrivateMacLink(readPrivateMac()||(isPrivateWhisperPage()?location.origin:null));
+    refreshShadowModeStatus();
     $("list").addEventListener("input",event=>{
       const input=event.target.closest("[data-shadow-text]"); if(!input) return;
       const key=input.dataset.shadowText,[id,rawIndex]=key.split(":"),turn=byId.get(id)?.turns[Number(rawIndex)]; if(!turn) return;
@@ -670,6 +707,34 @@
       userInteracted=true; setCurrent(id,true); cancelShadowConsent(); pauseForShadowing(key); shadowing.cancel(); save("progress",PAGE,{id,turn:index});
       updateShadowing({key,expected:turn.jp,transcript:text,phase:"result",source:"manual",comparison:compareSpoken(turn.jp,text)});
     });
+  }
+  function shadowModeMarkup() {
+    return `<section class="shadowing-intro" aria-label="跟读方式"><div class="shadow-mode-controls"><label for="shadowMode">跟读方式<select id="shadowMode"><option value="whisper">Mac Whisper · Mac 需运行</option><option value="dictation">iPad / 系统听写 · 不需要 Mac</option></select></label><button type="button" class="pill" id="checkMacConnection">↻ 检查连接</button></div><p id="localSpeechStatus" role="status"></p><p class="comparison-note">黄色原词可以点听；比对后点 ☆，留到 <a href="shadow-words.html">跟读错词本</a>。两种方式都比对文字，不是发音评分。</p><details id="dictationGuide"><summary>iPad 日语听写怎么用？</summary><p>Settings → General → Keyboard → Enable Dictation，并添加 Japanese 键盘。点一句的「日语听写」会展开并聚焦输入框；切换日语键盘，点键盘上的 🎙 开始读。网页无法直接启动 Apple 听写。文字出现后会高亮，读完点「比对文字」，再听黄词、点 ☆。</p><p>这个模式不调用 Mac 或 Whisper。Apple 的听写处理方式取决于设备、语言和系统设置；请查看 iPad 的 Dictation &amp; Privacy。网页只处理你输入的文字，不保存完整听写内容。</p></details><details id="privateMacDetails"><summary>连接我的 Mac（可选）</summary><p>Mac 和 iPad 安装 Tailscale 并登录同一个私人网络。Mac 上运行「Start Sandy for iPad.command」，把它显示的私人 HTTPS 地址填在这里。Mac 必须保持唤醒；不要使用公开的 Funnel。</p><form id="privateMacForm" class="private-mac-form"><label for="privateMacAddress">我的 Mac 私人 HTTPS 地址</label><input id="privateMacAddress" type="url" placeholder="https://my-mac.my-network.ts.net" autocomplete="off" required><button class="pill" type="submit">记住地址</button></form><p id="privateMacMessage" role="status"></p><a id="privateMacLink" class="pill" hidden>打开我的 Mac 私人页面 ↗</a></details><details><summary>麦克风与识别说明</summary><p>Mac Whisper：电脑本机或私人 HTTPS 页面录音，识别由 Mac 处理，不调用付费语音服务。电脑速度影响更新延迟；每句最多 60 秒，读完点「停止并比对」。iPad 听写：使用日语键盘的系统听写，把结果放进输入框；不使用浏览器 SpeechRecognition。两种方式的蓝色表示文字对应，黄色表示待核对，淡色表示尚未定位，不判断发音、重音或语调。</p><p>Whisper 临时录音处理后删除；录音及完整识别文字不保存到学习账户。只有你点 ☆ 的正确原词位置和复习标记会保存、备份和同步。录音过程中点词听读，会先停止麦克风。</p></details></section>`;
+  }
+  function updatePrivateMacLink(origin) {
+    const href=privateMacLink(origin),link=$("privateMacLink"); if(!link) return;
+    link.hidden=!href; if(href) { link.href=href; $("privateMacAddress").value=privateMacOrigin(origin); }
+  }
+  function setShadowMode(mode) {
+    if(!["whisper","dictation"].includes(mode)) return;
+    stopAuto(); shadowMode=mode;
+    try { localStorage.setItem(SHADOW_MODE_KEY,mode); } catch { toast("本次已切换，但浏览器无法记住这个设置。",true); }
+    document.querySelectorAll("[data-shadow-listen]").forEach(button=>{ const key=`${button.dataset.shadowListen}:${button.dataset.turnIndex}`; button.textContent=shadowButtonLabel(shadowStates.get(key)); });
+    refreshShadowModeStatus();
+  }
+  async function refreshShadowModeStatus() {
+    const generation=++shadowStatusGeneration,statusNode=$("localSpeechStatus"); if(!statusNode) return;
+    $("shadowMode").value=shadowMode; $("checkMacConnection").hidden=shadowMode!=="whisper";
+    if(shadowMode==="dictation") { statusNode.textContent="⌨ 独立听写模式 · 日语键盘 🎙 → 比对文字 · 不需要 Mac"; return; }
+    if(!shadowing.local) { statusNode.textContent=recognitionError("local-only"); $("privateMacDetails").open=true; return; }
+    if(!shadowing.supported) { statusNode.textContent=recognitionError("unsupported"); return; }
+    statusNode.textContent="正在检查 Mac Whisper…";
+    try {
+      const status=await shadowing.request("/api/speech/status"); if(generation!==shadowStatusGeneration) return;
+      if(isPrivateWhisperPage()&&status.private_origin!==location.origin) { statusNode.textContent=recognitionError("private-origin"); return; }
+      statusNode.textContent=`${status.ready?"✓ ":""}${status.message} · ${status.model}${isPrivateWhisperPage()?" · iPad 录音，Mac 识别":" · 本机识别"}`;
+      if(!readPrivateMac()&&status.private_origin) updatePrivateMacLink(status.private_origin);
+    } catch(error) { if(generation===shadowStatusGeneration) statusNode.textContent=`${recognitionError("connection")}（${error.message}）`; }
   }
   function targetUrl(item) {
     if(item.kind==="shadow-word") return `conversations.html?turn=${item.turnIndex}#${item.sourceId}`;
